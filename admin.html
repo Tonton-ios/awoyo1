@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWOYO 2026 — Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;600;800&display=swap');
+
+  :root {
+    --black: #07080d;
+    --dark: #0e111a;
+    --panel: rgba(255,255,255,0.075);
+    --panel-strong: rgba(255,255,255,0.12);
+    --border: rgba(255,255,255,0.13);
+    --green: #22e58f;
+    --green-glow: rgba(34,229,143,0.16);
+    --red: #ff496d;
+    --red-glow: rgba(255,73,109,0.15);
+    --amber: #ffd166;
+    --amber-glow: rgba(255,209,102,0.14);
+    --blue: #4b7dff;
+    --blue-glow: rgba(75,125,255,0.15);
+    --cyan: #2ee6d6;
+    --text: #f5f7fb;
+    --text-dim: rgba(245,247,251,0.58);
+    --mono: 'Share Tech Mono', monospace; --cond: 'Barlow Condensed', sans-serif;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { width:100%; overflow-x:hidden; }
+  body {
+    background:
+      radial-gradient(circle at 14% 8%, rgba(255,73,109,0.22), transparent 28%),
+      radial-gradient(circle at 88% 12%, rgba(46,230,214,0.18), transparent 30%),
+      linear-gradient(145deg, #07080d 0%, #11131d 52%, #080b14 100%);
+    color:var(--text);
+    font-family:var(--cond);
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none;
+    background:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size:42px 42px;
+    opacity:.7;
+  }
+
+  .topbar {
+    display:flex; align-items:center; justify-content:space-between; gap:18px;
+    padding:14px 24px;
+    background:rgba(7,8,13,.76);
+    border-bottom:1px solid var(--border);
+    backdrop-filter:blur(18px);
+    position:sticky; top:0; z-index:100;
+  }
+
+  .brand-lockup { display:flex; align-items:center; gap:12px; min-width:0; }
+  .brand-mark {
+    width:40px; height:40px; border-radius:12px;
+    display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,209,102,.42);
+    background:rgba(255,209,102,.1);
+    color:var(--amber);
+    font-family:var(--mono);
+    font-size:18px;
+    font-weight:700;
+    flex:0 0 auto;
+  }
+  .topbar h1 { font-family:var(--cond); font-size:22px; font-weight:800; letter-spacing:0.08em; color:#fff; text-transform:uppercase; line-height:1; }
+  .topbar h1 span { color:var(--amber); }
+  .topbar-sub { display:block; margin-top:3px; color:var(--text-dim); font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+  .topbar-right { display:flex; align-items:center; gap:12px; min-width:0; }
+
+  .live-badge {
+    display:flex; align-items:center; gap:6px;
+    padding:4px 10px; border-radius:20px;
+    border:1px solid var(--green); color:var(--green);
+    background:var(--green-glow);
+    font-family:var(--mono); font-size:11px; font-weight:600;
+  }
+  .live-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .container { max-width:1220px; width:100%; margin:0 auto; padding:24px; position:relative; z-index:1; }
+
+  .hero-admin {
+    display:flex; align-items:flex-end; justify-content:space-between; gap:20px;
+    margin-bottom:18px;
+    padding:24px;
+    border:1px solid var(--border);
+    border-radius:18px;
+    background:linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.045));
+    box-shadow:0 20px 60px rgba(0,0,0,.28);
+  }
+  .hero-kicker { color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:8px; }
+  .hero-admin h2 { color:#fff; font-size:42px; line-height:.95; letter-spacing:.02em; text-transform:uppercase; }
+  .hero-admin p { color:var(--text-dim); font-family:var(--mono); font-size:12px; line-height:1.45; max-width:460px; margin-top:10px; }
+  .back-link {
+    flex:0 0 auto;
+    min-height:42px;
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:0 14px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.14);
+    color:#fff;
+    background:rgba(255,255,255,.08);
+    text-decoration:none;
+    font-family:var(--mono);
+    font-size:11px;
+  }
+
+  /* ── STATS GRID ── */
+  .stats-grid {
+    display:grid; grid-template-columns:repeat(4,1fr); gap:12px;
+    margin-bottom:24px;
+  }
+
+  .stat-card {
+    background:linear-gradient(145deg, var(--panel-strong), rgba(255,255,255,.045));
+    border:1px solid var(--border);
+    border-radius:16px; padding:18px 20px;
+    position:relative; overflow:hidden; min-width:0;
+    box-shadow:0 16px 42px rgba(0,0,0,.18);
+  }
+
+  .stat-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  }
+  .stat-card.green::before { background:var(--green); }
+  .stat-card.red::before   { background:var(--red); }
+  .stat-card.blue::before  { background:var(--blue); }
+  .stat-card.amber::before { background:var(--amber); }
+
+  .stat-card-label { font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; }
+  .stat-card-value { font-family:var(--mono); font-size:36px; font-weight:700; line-height:1; margin-bottom:4px; }
+  .stat-card.green .stat-card-value { color:var(--green); text-shadow:0 0 20px var(--green-glow); }
+  .stat-card.red   .stat-card-value { color:var(--red);   text-shadow:0 0 20px var(--red-glow); }
+  .stat-card.blue  .stat-card-value { color:var(--blue);  text-shadow:0 0 20px var(--blue-glow); }
+  .stat-card.amber .stat-card-value { color:var(--amber); }
+  .stat-card-sub   { font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+
+  /* ── PROGRESS BAR ── */
+  .progress-card {
+    background:linear-gradient(145deg, var(--panel-strong), rgba(255,255,255,.045));
+    border:1px solid var(--border);
+    border-radius:16px; padding:18px 20px; margin-bottom:24px;
+  }
+  .progress-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .progress-title { font-family:var(--mono); font-size:11px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; }
+  .progress-pct { font-family:var(--mono); font-size:20px; color:var(--green); font-weight:700; }
+  .progress-track { height:10px; background:rgba(0,0,0,.26); border-radius:999px; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,var(--cyan),var(--green),var(--amber)); border-radius:999px; transition:width 1s ease; width:0%; }
+
+  /* ── MAIN GRID ── */
+  .main-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+  /* ── CARD ── */
+  .card {
+    background:linear-gradient(145deg, rgba(255,255,255,.105), rgba(255,255,255,.045));
+    border:1px solid var(--border);
+    border-radius:16px;
+    overflow:hidden;
+    box-shadow:0 16px 42px rgba(0,0,0,.18);
+  }
+  .card-header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title  { font-family:var(--mono); font-size:11px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; }
+  .card-body   { padding:16px; }
+
+  /* ── LOG TABLE ── */
+  .log-table { width:100%; border-collapse:collapse; }
+  .log-table th { font-family:var(--mono); font-size:10px; color:var(--text-dim); text-align:left; padding:10px; border-bottom:1px solid var(--border); letter-spacing:0.08em; text-transform:uppercase; }
+  .log-table td { font-family:var(--mono); font-size:12px; padding:8px 10px; border-bottom:1px solid rgba(30,40,52,0.5); color:var(--text); }
+
+  .badge {
+    display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.05em;
+  }
+  .badge-valid     { background:var(--green-glow); border:1px solid var(--green); color:var(--green); }
+  .badge-duplicate { background:var(--amber-glow,rgba(255,170,0,.15)); border:1px solid var(--amber); color:var(--amber); }
+  .badge-invalid   { background:var(--red-glow); border:1px solid var(--red); color:var(--red); }
+
+  /* ── CHART ── */
+  .chart-area {
+    height:150px; position:relative;
+    display:flex; align-items:flex-end; gap:4px; padding:0 4px;
+  }
+
+  .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; height:100%; justify-content:flex-end; }
+  .bar { width:100%; background:linear-gradient(180deg,var(--cyan),var(--green)); border-radius:5px 5px 0 0; min-height:2px; transition:height 0.8s ease; opacity:0.9; }
+  .bar-label { font-family:var(--mono); font-size:9px; color:var(--text-dim); }
+
+  /* ── SEARCH ── */
+  .search-row { display:flex; gap:8px; margin-bottom:16px; }
+  .search-input {
+    flex:1; min-width:0; background:rgba(0,0,0,.22); border:1px solid var(--border); border-radius:12px;
+    padding:12px 13px; color:var(--text); font-family:var(--mono); font-size:13px; outline:none;
+    transition:border-color 0.2s;
+  }
+  .search-input:focus { border-color:var(--green); }
+  .search-btn {
+    padding:10px 16px; background:var(--green-glow); border:1px solid var(--green);
+    border-radius:12px; color:var(--green); font-family:var(--cond); font-size:13px;
+    font-weight:600; cursor:pointer; letter-spacing:0.05em;
+  }
+
+  .search-result {
+    padding:12px; border-radius:6px; border:1px solid var(--border);
+    font-family:var(--mono); font-size:12px; display:none;
+  }
+  .search-result.visible { display:block; }
+  .search-result.valid     { border-color:var(--green); background:var(--green-glow); }
+  .search-result.scanned   { border-color:var(--amber); background:rgba(255,170,0,.1); }
+  .search-result.not-found { border-color:var(--red);   background:var(--red-glow); }
+
+  @media(max-width:768px) {
+    .topbar { padding:12px 16px; }
+    .hero-admin { align-items:flex-start; flex-direction:column; }
+    .hero-admin h2 { font-size:34px; }
+    .stats-grid { grid-template-columns:repeat(2,1fr); }
+    .main-grid  { grid-template-columns:1fr; }
+  }
+
+  @media(max-width:520px) {
+    .topbar {
+      align-items:flex-start;
+      gap:10px;
+      flex-direction:column;
+    }
+    .brand-mark { width:36px; height:36px; border-radius:10px; }
+    .topbar h1 { font-size:18px; }
+    .topbar-right { width:100%; justify-content:space-between; }
+    .container { padding:12px; }
+    .hero-admin { padding:16px; border-radius:14px; margin-bottom:12px; }
+    .hero-admin h2 { font-size:29px; }
+    .hero-admin p { font-size:11px; }
+    .back-link { width:100%; }
+    .stats-grid { gap:8px; margin-bottom:12px; }
+    .stat-card { padding:14px 12px; border-radius:8px; }
+    .stat-card-label { font-size:9px; letter-spacing:0.06em; }
+    .stat-card-value { font-size:28px; }
+    .stat-card-sub { font-size:10px; }
+    .progress-card { padding:14px 12px; margin-bottom:12px; border-radius:8px; }
+    .progress-title { font-size:10px; letter-spacing:0.06em; }
+    .card { border-radius:8px; }
+    .card-header { padding:10px 12px; gap:10px; }
+    .card-title { font-size:10px; letter-spacing:0.06em; }
+    .card-body { padding:12px; }
+    .log-table th,
+    .log-table td { padding:8px 7px; font-size:10px; white-space:nowrap; }
+    .search-row { flex-direction:column; }
+    .search-input,
+    .search-btn { width:100%; min-height:44px; }
+    .chart-area { height:130px; gap:3px; }
+  }
+
+  @media(max-width:360px) {
+    .stats-grid { grid-template-columns:1fr; }
+    .hero-admin h2 { font-size:25px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand-lockup">
+    <div class="brand-mark">A</div>
+    <div>
+      <h1>AWOYO <span>ADMIN</span></h1>
+      <span class="topbar-sub">Contrôle des entrées 2026</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+    <span id="lastUpdate" style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">—</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <section class="hero-admin">
+    <div>
+      <div class="hero-kicker">Tableau de bord événement</div>
+      <h2>AWOYO en temps réel</h2>
+      <p>Suivi des bracelets scannés, doublons, codes invalides et activité d'entrée pour garder le party sous contrôle.</p>
+    </div>
+    <a class="back-link" href="index.html">Retour accueil</a>
+  </section>
+
+  <!-- STATS CARDS -->
+  <div class="stats-grid">
+    <div class="stat-card green">
+      <div class="stat-card-label">Total Scannés</div>
+      <div class="stat-card-value" id="ds-scanned">—</div>
+      <div class="stat-card-sub">entrées validées</div>
+    </div>
+    <div class="stat-card blue">
+      <div class="stat-card-label">Restants</div>
+      <div class="stat-card-value" id="ds-remaining">—</div>
+      <div class="stat-card-sub">bracelets non scannés</div>
+    </div>
+    <div class="stat-card amber">
+      <div class="stat-card-label">Doublons</div>
+      <div class="stat-card-value" id="ds-duplicates">—</div>
+      <div class="stat-card-sub">tentatives frauduleuses</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-card-label">Invalides</div>
+      <div class="stat-card-value" id="ds-invalid">—</div>
+      <div class="stat-card-sub">codes non reconnus</div>
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="progress-card">
+    <div class="progress-header">
+      <span class="progress-title">TAUX DE REMPLISSAGE</span>
+      <span class="progress-pct" id="ds-rate">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main-grid">
+
+    <!-- LOG DES SCANS -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">// LOG TEMPS RÉEL</span>
+        <span id="logRefresh" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">AUTO-REFRESH</span>
+      </div>
+      <div style="overflow-x:auto;max-height:360px;overflow-y:auto;">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>Heure</th>
+              <th>Bracelet</th>
+              <th>Status</th>
+              <th>Staff</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody">
+            <tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:20px">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RECHERCHE + ACTIVITÉ PAR HEURE -->
+    <div style="display:flex;flex-direction:column;gap:16px;">
+
+      <!-- Recherche bracelet -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">// VÉRIFIER UN BRACELET</span></div>
+        <div class="card-body">
+          <div class="search-row">
+            <input type="number" class="search-input" id="searchNum" placeholder="Numéro ex: 0042" min="1" max="1000">
+            <button class="search-btn" onclick="searchBracelet()">CHERCHER</button>
+          </div>
+          <div class="search-result" id="searchResult"></div>
+        </div>
+      </div>
+
+      <!-- Activité par heure -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">// ACTIVITÉ PAR HEURE</span></div>
+        <div class="card-body">
+          <div class="chart-area" id="hourChart">
+            <div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;margin:auto">Chargement...</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const CONFIG = {
+  SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
+  REFRESH_INTERVAL: 5000,
+};
+
+let supabase = null;
+let refreshTimer = null;
+
+async function init() {
+  supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+
+  // Auth check
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) {
+    window.location.href = 'scanner.html';
+    return;
+  }
+
+  // Temps réel
+  supabase.channel('admin_realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, refreshAll)
+    .subscribe();
+
+  refreshAll();
+  setInterval(refreshAll, CONFIG.REFRESH_INTERVAL);
+}
+
+async function refreshAll() {
+  await Promise.all([
+    fetchDashboardStats(),
+    fetchRecentLogs(),
+    fetchHourlyActivity()
+  ]);
+  document.getElementById('lastUpdate').textContent =
+    new Date().toLocaleTimeString('fr-FR');
+}
+
+async function fetchDashboardStats() {
+  const { data } = await supabase.from('dashboard_stats').select('*').single();
+  if (!data) return;
+
+  document.getElementById('ds-scanned').textContent   = data.scanned_count ?? '—';
+  document.getElementById('ds-remaining').textContent = data.remaining_entries ?? '—';
+  document.getElementById('ds-rate').textContent      = data.fill_rate_percent != null ? `${data.fill_rate_percent}%` : '—';
+  document.getElementById('progressFill').style.width = `${data.fill_rate_percent || 0}%`;
+
+  // Duplicates & invalids
+  const { count: dups } = await supabase.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','DUPLICATE');
+  const { count: inv  } = await supabase.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','INVALID');
+  document.getElementById('ds-duplicates').textContent = dups ?? '—';
+  document.getElementById('ds-invalid').textContent    = inv  ?? '—';
+}
+
+async function fetchRecentLogs() {
+  const { data } = await supabase
+    .from('scan_logs')
+    .select('scanned_at, bracelet_uid, status, scanned_by')
+    .order('scanned_at', { ascending: false })
+    .limit(20);
+
+  if (!data) return;
+
+  const tbody = document.getElementById('logTableBody');
+  if (data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:20px">Aucun scan</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.map(r => {
+    const badge = r.status === 'VALID'
+      ? '<span class="badge badge-valid">VALIDE</span>'
+      : r.status === 'DUPLICATE'
+      ? '<span class="badge badge-duplicate">DOUBLON</span>'
+      : '<span class="badge badge-invalid">INVALIDE</span>';
+
+    const time = new Date(r.scanned_at).toLocaleTimeString('fr-FR');
+    const uid  = r.bracelet_uid ? r.bracelet_uid.slice(0,8) + '...' : '—';
+    const staff= r.scanned_by ? r.scanned_by.slice(0,12) : '—';
+
+    return `<tr>
+      <td>${time}</td>
+      <td style="font-size:11px;color:var(--text-dim)">${uid}</td>
+      <td>${badge}</td>
+      <td style="color:var(--text-dim)">${staff}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function fetchHourlyActivity() {
+  // Scans par heure sur les 8 dernières heures
+  const { data } = await supabase
+    .from('scan_logs')
+    .select('scanned_at')
+    .eq('status', 'VALID')
+    .gte('scanned_at', new Date(Date.now() - 8*60*60*1000).toISOString());
+
+  if (!data) return;
+
+  const hourCounts = {};
+  for (let i = 7; i >= 0; i--) {
+    const h = new Date(Date.now() - i*60*60*1000).getHours();
+    hourCounts[h] = 0;
+  }
+  data.forEach(r => {
+    const h = new Date(r.scanned_at).getHours();
+    if (h in hourCounts) hourCounts[h]++;
+  });
+
+  const hours  = Object.keys(hourCounts);
+  const counts = Object.values(hourCounts);
+  const maxVal = Math.max(...counts, 1);
+
+  document.getElementById('hourChart').innerHTML = hours.map((h, i) => {
+    const heightPct = Math.round((counts[i] / maxVal) * 100);
+    return `
+      <div class="bar-wrap">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--green);margin-bottom:2px">
+          ${counts[i] > 0 ? counts[i] : ''}
+        </div>
+        <div class="bar" style="height:${heightPct}%"></div>
+        <div class="bar-label">${String(h).padStart(2,'0')}h</div>
+      </div>`;
+  }).join('');
+}
+
+async function searchBracelet() {
+  const num = parseInt(document.getElementById('searchNum').value);
+  const el  = document.getElementById('searchResult');
+
+  if (!num || num < 1 || num > 1000) {
+    el.className = 'search-result visible not-found';
+    el.innerHTML = '⚠ Numéro invalide (1–1000)';
+    return;
+  }
+
+  el.className = 'search-result visible';
+  el.innerHTML = 'Recherche en cours...';
+
+  const { data } = await supabase
+    .from('bracelets')
+    .select('bracelet_num, scanned, scanned_at, scanned_by')
+    .eq('bracelet_num', num)
+    .single();
+
+  if (!data) {
+    el.className = 'search-result visible not-found';
+    el.innerHTML = `✕ Bracelet #${String(num).padStart(4,'0')} introuvable`;
+    return;
+  }
+
+  if (data.scanned) {
+    const when = new Date(data.scanned_at).toLocaleString('fr-FR');
+    el.className = 'search-result visible scanned';
+    el.innerHTML = `⚠ B-${String(num).padStart(4,'0')} — DÉJÀ SCANNÉ<br>
+      <span style="color:var(--text-dim)">Le ${when}<br>Par: ${data.scanned_by || '?'}</span>`;
+  } else {
+    el.className = 'search-result visible valid';
+    el.innerHTML = `✓ B-${String(num).padStart(4,'0')} — NON SCANNÉ<br>
+      <span style="color:var(--text-dim)">Bracelet valide, non encore utilisé</span>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>

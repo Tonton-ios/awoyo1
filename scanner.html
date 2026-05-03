@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CONTRÔLE ACCÈS — SCANNER</title>
+
+<!-- Supabase SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- QR Scanner -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+  /* ══════════════════════════════════════════════
+     DESIGN: Industrial Security Terminal
+     Palette: Noir profond + Vert néon + Rouge alert
+  ══════════════════════════════════════════════ */
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;600;800&display=swap');
+
+  :root {
+    --black:       #090b0f;
+    --dark:        #0f1318;
+    --panel:       #141920;
+    --border:      #1e2834;
+    --green:       #00ff88;
+    --green-dim:   #00cc6a;
+    --green-glow:  rgba(0, 255, 136, 0.15);
+    --red:         #ff2244;
+    --red-dim:     #cc1133;
+    --red-glow:    rgba(255, 34, 68, 0.2);
+    --amber:       #ffaa00;
+    --amber-glow:  rgba(255, 170, 0, 0.2);
+    --text:        #c8d6e8;
+    --text-dim:    #4a5e74;
+    --mono:        'Share Tech Mono', monospace;
+    --cond:        'Barlow Condensed', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    height: 100%;
+    background: var(--black);
+    color: var(--text);
+    font-family: var(--cond);
+    overflow-x: hidden;
+    width: 100%;
+  }
+
+  /* ── SCAN LINES OVERLAY ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px
+    );
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    border: 2px solid var(--green);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    box-shadow: 0 0 10px var(--green-glow);
+  }
+
+  .header h1 {
+    font-family: var(--cond);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.1em;
+    color: #fff;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .header h1 span { color: var(--green); }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid;
+    transition: all 0.3s;
+    white-space: nowrap;
+  }
+
+  .status-pill.online  { border-color: var(--green); color: var(--green); background: var(--green-glow); }
+  .status-pill.offline { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  .online  .status-dot { background: var(--green); }
+  .offline .status-dot { background: var(--amber); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+  }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat-box {
+    background: var(--panel);
+    padding: 8px 12px;
+    text-align: center;
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--green);
+    line-height: 1;
+    text-shadow: 0 0 12px var(--green-glow);
+  }
+
+  /* ── MAIN CONTENT ── */
+  .main { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* ── SCANNER CARD ── */
+  .scanner-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  .card-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* ── QR VIEWPORT ── */
+  #qr-reader {
+    position: relative;
+    background: #000;
+    min-height: 240px;
+  }
+
+  #qr-reader video { width: 100% !important; max-height: 300px; object-fit: cover; }
+
+  /* Remove default html5-qrcode UI clutter */
+  #qr-reader > div { border: none !important; }
+  #qr-reader__scan_region { border: none !important; }
+  #qr-reader__dashboard { display: none !important; }
+  #qr-reader__status_span { display: none !important; }
+
+  .scan-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .scan-frame {
+    width: 180px; height: 180px;
+    position: relative;
+  }
+
+  .scan-frame::before, .scan-frame::after,
+  .scan-frame > span::before, .scan-frame > span::after {
+    content: '';
+    position: absolute;
+    width: 24px; height: 24px;
+    border-color: var(--green);
+    border-style: solid;
+  }
+
+  .scan-frame::before  { top: 0; left: 0;  border-width: 2px 0 0 2px; }
+  .scan-frame::after   { top: 0; right: 0; border-width: 2px 2px 0 0; }
+  .scan-frame > span::before { bottom: 0; left: 0;  border-width: 0 0 2px 2px; }
+  .scan-frame > span::after  { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--green), transparent);
+    animation: scanline 2.5s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--green);
+    top: 0;
+  }
+
+  @keyframes scanline {
+    0%   { top: 8px; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { top: 172px; opacity: 0; }
+  }
+
+  /* ── SCANNER CONTROLS ── */
+  .scanner-controls { padding: 12px 14px; display: flex; gap: 8px; }
+
+  .btn {
+    flex: 1;
+    padding: 12px 8px;
+    border: 1px solid;
+    border-radius: 6px;
+    font-family: var(--cond);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    min-width: 0;
+  }
+
+  .btn-start  { background: var(--green-glow); border-color: var(--green); color: var(--green); }
+  .btn-stop   { background: var(--red-glow);   border-color: var(--red);   color: var(--red);   }
+  .btn-manual { background: transparent;        border-color: var(--border); color: var(--text-dim); }
+
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── RESULT PANEL ── */
+  .result-panel {
+    padding: 16px 14px;
+    border-top: 1px solid var(--border);
+    min-height: 100px;
+    transition: all 0.3s;
+  }
+
+  .result-panel.hidden { display: none; }
+
+  .result-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .result-icon {
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    border: 2px solid;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    flex-shrink: 0;
+  }
+
+  .result-icon.valid    { border-color: var(--green); background: var(--green-glow); box-shadow: 0 0 20px var(--green-glow); }
+  .result-icon.invalid  { border-color: var(--red);   background: var(--red-glow);   box-shadow: 0 0 20px var(--red-glow); }
+  .result-icon.duplicate { border-color: var(--amber); background: var(--amber-glow); box-shadow: 0 0 20px var(--amber-glow); }
+
+  .result-text-wrap {}
+
+  .result-label {
+    font-family: var(--cond);
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+
+  .result-label.valid    { color: var(--green); }
+  .result-label.invalid  { color: var(--red); }
+  .result-label.duplicate { color: var(--amber); }
+
+  .result-detail {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  /* ── OFFLINE QUEUE ── */
+  .queue-card {
+    background: var(--panel);
+    border: 1px solid var(--amber);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: none;
+  }
+
+  .queue-card.visible { display: block; }
+
+  .queue-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .queue-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .queue-badge {
+    background: var(--amber);
+    color: #000;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+  }
+
+  .queue-info {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  .btn-sync {
+    margin-top: 10px;
+    width: 100%;
+    padding: 10px;
+    background: var(--amber-glow);
+    border: 1px solid var(--amber);
+    border-radius: 6px;
+    color: var(--amber);
+    font-family: var(--cond);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  /* ── RECENT SCANS LOG ── */
+  .log-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .log-list { max-height: 200px; overflow-y: auto; }
+
+  .log-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    animation: slideIn 0.2s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .log-dot.valid    { background: var(--green); }
+  .log-dot.duplicate { background: var(--amber); }
+  .log-dot.invalid  { background: var(--red); }
+
+  .log-bracelet {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .log-time {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  /* ── STAFF LOGIN MODAL ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(9, 11, 15, 0.95);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+
+  .modal-overlay.hidden { display: none; }
+
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 24px;
+    width: 100%; max-width: 340px;
+  }
+
+  .modal-logo {
+    text-align: center;
+    font-size: 40px;
+    margin-bottom: 16px;
+  }
+
+  .modal h2 {
+    text-align: center;
+    font-family: var(--cond);
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #fff;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .modal p {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+  }
+
+  .form-group { margin-bottom: 14px; }
+
+  .form-label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .form-input {
+    width: 100%;
+    background: var(--dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .form-input:focus { border-color: var(--green); }
+
+  .btn-login {
+    width: 100%;
+    padding: 14px;
+    background: var(--green);
+    border: none;
+    border-radius: 6px;
+    color: #000;
+    font-family: var(--cond);
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: all 0.15s;
+  }
+
+  .btn-login:hover  { background: var(--green-dim); }
+  .btn-login:active { transform: scale(0.98); }
+
+  .error-msg {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--red);
+    text-align: center;
+    margin-top: 10px;
+    min-height: 16px;
+  }
+
+  /* ── FLASHER ANIMATION ── */
+  @keyframes flash-green {
+    0%, 100% { background: var(--black); }
+    50% { background: rgba(0, 255, 136, 0.05); }
+  }
+
+  @keyframes flash-red {
+    0%, 100% { background: var(--black); }
+    20%, 60% { background: rgba(255, 34, 68, 0.08); }
+    40%, 80% { background: var(--black); }
+  }
+
+  body.flash-valid   { animation: flash-green 0.5s; }
+  body.flash-invalid { animation: flash-red 0.6s; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--dark); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  @media (max-width: 420px) {
+    .header {
+      padding: 10px 12px;
+      gap: 8px;
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      letter-spacing: 0.06em;
+    }
+
+    .status-pill {
+      padding: 4px 8px;
+      font-size: 10px;
+    }
+
+    .stats-bar {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .stat-box {
+      padding: 7px 6px;
+    }
+
+    .stat-label {
+      font-size: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .stat-value {
+      font-size: 18px;
+    }
+
+    .main {
+      padding: 10px;
+      gap: 10px;
+    }
+
+    #qr-reader {
+      min-height: 220px;
+    }
+
+    #qr-reader video {
+      max-height: 260px;
+    }
+
+    .scan-frame {
+      width: 160px;
+      height: 160px;
+    }
+
+    @keyframes scanline {
+      0%   { top: 8px; opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { top: 152px; opacity: 0; }
+    }
+
+    .scanner-controls {
+      padding: 10px;
+      grid-template-columns: 1fr 1fr;
+      display: grid;
+    }
+
+    .btn {
+      flex: none;
+      min-height: 44px;
+      padding: 11px 6px;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+
+    .btn-manual {
+      grid-column: 1 / -1;
+    }
+
+    .result-status {
+      align-items: flex-start;
+    }
+
+    .result-icon {
+      width: 46px;
+      height: 46px;
+      font-size: 21px;
+    }
+
+    .result-label {
+      font-size: 20px;
+    }
+
+    .card-header,
+    .queue-header {
+      gap: 8px;
+    }
+  }
+
+  @media (max-width: 340px) {
+    .header h1 {
+      font-size: 14px;
+    }
+
+    .status-pill {
+      font-size: 9px;
+    }
+
+    .btn {
+      font-size: 12px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN MODAL ── -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal">
+    <div class="modal-logo">🎪</div>
+    <h2>Contrôle <span style="color:var(--green)">Accès</span></h2>
+    <p>STAFF AUTORISÉ UNIQUEMENT</p>
+
+    <div class="form-group">
+      <label class="form-label">Email staff</label>
+      <input type="email" class="form-input" id="loginEmail" placeholder="staff@event.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Mot de passe</label>
+      <input type="password" class="form-input" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-login" id="loginBtn" onclick="handleLogin()">CONNEXION</button>
+    <div class="error-msg" id="loginError"></div>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo-icon">🎟</div>
+    <h1>CTRL <span>ACCESS</span></h1>
+  </div>
+  <div class="status-pill online" id="statusPill">
+    <div class="status-dot"></div>
+    <span id="statusText">EN LIGNE</span>
+  </div>
+</div>
+
+<!-- ── STATS BAR ── -->
+<div class="stats-bar">
+  <div class="stat-box">
+    <div class="stat-label">SCANNÉS</div>
+    <div class="stat-value" id="statScanned">—</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">RESTANTS</div>
+    <div class="stat-value" id="statRemaining">—</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">TAUX</div>
+    <div class="stat-value" id="statRate">—</div>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<div class="main">
+
+  <!-- Scanner Card -->
+  <div class="scanner-card">
+    <div class="card-header">
+      <span class="card-title">// SCANNER QR</span>
+      <span id="staffBadge" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">NON CONNECTÉ</span>
+    </div>
+
+    <div id="qr-reader">
+      <div class="scan-overlay">
+        <div class="scan-frame">
+          <span></span>
+          <div class="scan-line"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scanner-controls">
+      <button class="btn btn-start" id="btnStart" onclick="startScanner()">▶ DÉMARRER</button>
+      <button class="btn btn-stop"  id="btnStop"  onclick="stopScanner()" disabled>■ STOP</button>
+      <button class="btn btn-manual" onclick="showManualInput()">✎ MANUEL</button>
+    </div>
+
+    <!-- Résultat -->
+    <div class="result-panel hidden" id="resultPanel">
+      <div class="result-status">
+        <div class="result-icon" id="resultIcon"></div>
+        <div class="result-text-wrap">
+          <div class="result-label" id="resultLabel"></div>
+          <div class="result-detail" id="resultDetail"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File hors-ligne -->
+  <div class="queue-card" id="queueCard">
+    <div class="queue-header">
+      <span class="queue-title">⚠ FILE HORS-LIGNE</span>
+      <span class="queue-badge" id="queueCount">0</span>
+    </div>
+    <div class="queue-info" id="queueInfo">Scans en attente de synchronisation</div>
+    <button class="btn-sync" onclick="syncOfflineQueue()">↑ SYNCHRONISER MAINTENANT</button>
+  </div>
+
+  <!-- Log récent -->
+  <div class="log-card">
+    <div class="card-header">
+      <span class="card-title">// HISTORIQUE RÉCENT</span>
+      <span id="logCount" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">0 scans</span>
+    </div>
+    <div class="log-list" id="logList">
+      <div style="padding:20px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text-dim)">
+        Aucun scan effectué
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONFIGURATION — Remplacer par vos vraies valeurs
+// ═══════════════════════════════════════════════════════════
+const CONFIG = {
+  SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co/rest/v1/',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
+  SCAN_COOLDOWN_MS: 2500,   // Délai anti-double-scan (ms)
+  RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
+  RETRY_DELAY_MS: 800,       // Délai entre tentatives
+};
+
+// ═══════════════════════════════════════════════════════════
+//  ÉTAT GLOBAL
+// ═══════════════════════════════════════════════════════════
+let supabase = null;
+let html5QrCode = null;
+let isScanning = false;
+let currentUser = null;
+let staffId = null;
+let lastScanTime = 0;
+let isOnline = navigator.onLine;
+let offlineQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
+let scanLog = [];
+let stats = { scanned: 0, remaining: 0, total: 0 };
+
+// ═══════════════════════════════════════════════════════════
+//  INITIALISATION SUPABASE
+// ═══════════════════════════════════════════════════════════
+function initSupabase() {
+  try {
+    supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+
+    // Temps réel : écouter les mises à jour des stats
+    supabase.channel('bracelets_realtime')
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'bracelets' },
+        () => fetchStats()
+      )
+      .subscribe();
+  } catch(e) {
+    console.error('Supabase init failed:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AUTHENTIFICATION
+// ═══════════════════════════════════════════════════════════
+async function handleLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass  = document.getElementById('loginPassword').value;
+  const btn   = document.getElementById('loginBtn');
+  const errEl = document.getElementById('loginError');
+
+  errEl.textContent = '';
+  btn.textContent = 'CONNEXION...';
+  btn.disabled = true;
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+
+    if (error) throw error;
+
+    currentUser = data.user;
+    staffId = `staff_${currentUser.id.slice(0, 8)}`;
+
+    document.getElementById('staffBadge').textContent = email.split('@')[0].toUpperCase();
+    document.getElementById('loginModal').classList.add('hidden');
+
+    await fetchStats();
+    setOnline(navigator.onLine);
+    syncOfflineQueue(); // Sync auto au login
+
+  } catch(e) {
+    errEl.textContent = 'Identifiants incorrects ou accès refusé';
+    btn.textContent = 'CONNEXION';
+    btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SCANNER QR CODE
+// ═══════════════════════════════════════════════════════════
+function startScanner() {
+  if (isScanning) return;
+
+  html5QrCode = new Html5Qrcode("qr-reader");
+
+  const config = {
+    fps: 15,
+    qrbox: { width: 220, height: 220 },
+    aspectRatio: 1.0,
+    disableFlip: false,
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+  };
+
+  html5QrCode.start(
+    { facingMode: "environment" },
+    config,
+    onQrSuccess,
+    () => {} // Ignore decode errors (scanning en cours)
+  ).then(() => {
+    isScanning = true;
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+  }).catch(err => {
+    showResult('invalid', '✕', 'ERREUR CAMÉRA', err.message || 'Accès caméra refusé');
+  });
+}
+
+function stopScanner() {
+  if (!isScanning || !html5QrCode) return;
+  html5QrCode.stop().then(() => {
+    isScanning = false;
+    document.getElementById('btnStart').disabled = false;
+    document.getElementById('btnStop').disabled = true;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TRAITEMENT D'UN SCAN
+// ═══════════════════════════════════════════════════════════
+async function onQrSuccess(token) {
+  // Anti-double-déclenchement
+  const now = Date.now();
+  if (now - lastScanTime < CONFIG.SCAN_COOLDOWN_MS) return;
+  lastScanTime = now;
+
+  // Vibration haptic
+  if (navigator.vibrate) navigator.vibrate(80);
+
+  showResult('pending', '⟳', 'VÉRIFICATION...', 'Interrogation de la base de données');
+
+  if (isOnline) {
+    await processScanOnline(token);
+  } else {
+    processScanOffline(token);
+  }
+}
+
+// ── SCAN EN LIGNE ──────────────────────────────────────────
+async function processScanOnline(token, isRetry = false) {
+  for (let attempt = 1; attempt <= CONFIG.RETRY_ATTEMPTS; attempt++) {
+    try {
+      const { data, error } = await supabase.rpc('scan_bracelet', {
+        p_token:    token,
+        p_staff_id: staffId
+      });
+
+      if (error) throw error;
+
+      handleScanResult(data, token);
+      return;
+
+    } catch(e) {
+      if (attempt === CONFIG.RETRY_ATTEMPTS) {
+        // Basculer en mode dégradé
+        console.warn('Réseau défaillant, bascule offline:', e);
+        processScanOffline(token);
+        return;
+      }
+      await sleep(CONFIG.RETRY_DELAY_MS * attempt);
+    }
+  }
+}
+
+// ── SCAN HORS LIGNE (mode dégradé) ────────────────────────
+function processScanOffline(token) {
+  // Vérification locale d'abord (scans de cette session)
+  const localDuplicate = offlineQueue.find(q => q.token === token);
+
+  if (localDuplicate) {
+    handleScanResult({
+      status: 'DUPLICATE',
+      message: 'Doublon détecté localement',
+      first_scan_at: localDuplicate.scanned_at
+    }, token);
+    return;
+  }
+
+  // Ajouter à la file d'attente
+  const entry = {
+    token,
+    scanned_at: new Date().toISOString(),
+    staff_id: staffId,
+    synced: false
+  };
+
+  offlineQueue.push(entry);
+  localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
+
+  handleScanResult({
+    status: 'OFFLINE_QUEUED',
+    message: 'Enregistré localement (hors ligne)',
+    bracelet_num: null
+  }, token);
+
+  updateQueueUI();
+}
+
+// ── AFFICHAGE DU RÉSULTAT ──────────────────────────────────
+function handleScanResult(result, token) {
+  const { status, message, bracelet_num, first_scan_at } = result;
+
+  switch(status) {
+    case 'VALID':
+      showResult('valid', '✓', 'ACCÈS AUTORISÉ', `Bracelet #${String(bracelet_num).padStart(4,'0')}`);
+      flashBody('valid');
+      addToLog('valid', bracelet_num);
+      fetchStats();
+      break;
+
+    case 'DUPLICATE':
+      const when = first_scan_at
+        ? `1er scan: ${new Date(first_scan_at).toLocaleTimeString('fr-FR')}`
+        : 'Heure inconnue';
+      showResult('invalid', '⚠', 'DOUBLON DÉTECTÉ', `${when} — BRACELET SUSPECT !`);
+      flashBody('invalid');
+      addToLog('duplicate', bracelet_num);
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+      break;
+
+    case 'INVALID':
+      showResult('invalid', '✕', 'CODE INVALIDE', 'QR code non reconnu dans le système');
+      flashBody('invalid');
+      addToLog('invalid', null);
+      break;
+
+    case 'OFFLINE_QUEUED':
+      showResult('duplicate', '⏳', 'HORS LIGNE', `Enregistré — synchronisation dès retour réseau`);
+      break;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SYNCHRONISATION FILE OFFLINE
+// ═══════════════════════════════════════════════════════════
+async function syncOfflineQueue() {
+  if (!isOnline || offlineQueue.length === 0 || !supabase) return;
+
+  const pending = offlineQueue.filter(q => !q.synced);
+  if (pending.length === 0) return;
+
+  let synced = 0;
+  for (const entry of pending) {
+    try {
+      await supabase.rpc('scan_bracelet', {
+        p_token:    entry.token,
+        p_staff_id: entry.staff_id
+      });
+      entry.synced = true;
+      synced++;
+    } catch(e) {
+      // Keep in queue
+    }
+  }
+
+  offlineQueue = offlineQueue.filter(q => !q.synced);
+  localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
+
+  updateQueueUI();
+  if (synced > 0) fetchStats();
+  console.log(`Sync: ${synced}/${pending.length} entrées synchronisées`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STATISTIQUES TEMPS RÉEL
+// ═══════════════════════════════════════════════════════════
+async function fetchStats() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase
+      .from('dashboard_stats')
+      .select('*')
+      .single();
+
+    if (error || !data) return;
+
+    stats.scanned   = data.scanned_count || 0;
+    stats.remaining = data.remaining_entries || 0;
+    stats.total     = data.total_bracelets || 0;
+
+    document.getElementById('statScanned').textContent   = stats.scanned;
+    document.getElementById('statRemaining').textContent = stats.remaining;
+    document.getElementById('statRate').textContent      =
+      stats.total > 0 ? `${data.fill_rate_percent}%` : '—';
+
+  } catch(e) {
+    console.warn('Stats fetch failed:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UI HELPERS
+// ═══════════════════════════════════════════════════════════
+function showResult(type, icon, label, detail) {
+  const panel  = document.getElementById('resultPanel');
+  const iconEl = document.getElementById('resultIcon');
+  const labelEl= document.getElementById('resultLabel');
+  const detailEl= document.getElementById('resultDetail');
+
+  panel.classList.remove('hidden');
+  iconEl.className  = `result-icon ${type === 'pending' ? 'valid' : type}`;
+  iconEl.textContent = icon;
+  labelEl.className = `result-label ${type === 'pending' ? '' : type}`;
+  labelEl.textContent = label;
+  detailEl.textContent = detail;
+}
+
+function flashBody(type) {
+  document.body.classList.remove('flash-valid', 'flash-invalid');
+  void document.body.offsetWidth; // Force reflow
+  document.body.classList.add(`flash-${type}`);
+}
+
+function addToLog(status, braceletNum) {
+  const now = new Date().toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const label = braceletNum ? `B-${String(braceletNum).padStart(4,'0')}` : 'CODE INVALIDE';
+
+  scanLog.unshift({ status, label, time: now });
+  if (scanLog.length > 20) scanLog.pop();
+
+  const listEl = document.getElementById('logList');
+  listEl.innerHTML = scanLog.map(s => `
+    <div class="log-item">
+      <div class="log-dot ${s.status}"></div>
+      <span class="log-bracelet">${s.label}</span>
+      <span class="log-time">${s.time}</span>
+    </div>
+  `).join('');
+
+  document.getElementById('logCount').textContent = `${scanLog.length} scans`;
+}
+
+function updateQueueUI() {
+  const count = offlineQueue.filter(q => !q.synced).length;
+  const card  = document.getElementById('queueCard');
+  card.classList.toggle('visible', count > 0);
+  document.getElementById('queueCount').textContent = count;
+  document.getElementById('queueInfo').textContent  =
+    `${count} scan(s) en attente • Connectez-vous au réseau pour synchroniser`;
+}
+
+function setOnline(online) {
+  isOnline = online;
+  const pill = document.getElementById('statusPill');
+  const text = document.getElementById('statusText');
+  pill.className = `status-pill ${online ? 'online' : 'offline'}`;
+  text.textContent = online ? 'EN LIGNE' : 'HORS LIGNE';
+  if (online) syncOfflineQueue();
+}
+
+function showManualInput() {
+  const token = prompt('Entrer le code QR manuellement:');
+  if (token && token.trim()) onQrSuccess(token.trim());
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ═══════════════════════════════════════════════════════════
+//  NETWORK LISTENERS
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('online',  () => setOnline(true));
+window.addEventListener('offline', () => setOnline(false));
+
+// ═══════════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════════
+(function boot() {
+  initSupabase();
+  updateQueueUI();
+
+  // Auto-login si session active
+  if (supabase) {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        currentUser = data.session.user;
+        staffId = `staff_${currentUser.id.slice(0, 8)}`;
+        document.getElementById('staffBadge').textContent =
+          currentUser.email.split('@')[0].toUpperCase();
+        document.getElementById('loginModal').classList.add('hidden');
+        fetchStats();
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>
