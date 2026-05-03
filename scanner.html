@@ -817,7 +817,11 @@ function initSupabase() {
     // Temps réel : écouter les mises à jour des stats
     supabaseClient.channel('bracelets_realtime')
       .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'bracelets' },
+        { event: '*', schema: 'public', table: 'bracelets' },
+        () => fetchStats()
+      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'scan_logs' },
         () => fetchStats()
       )
       .subscribe();
@@ -1144,10 +1148,13 @@ function processScanOffline(token) {
 // ── AFFICHAGE DU RÉSULTAT ──────────────────────────────────
 function handleScanResult(result, token) {
   const { status, message, bracelet_num, first_scan_at } = result;
+  const scanTime = new Date().toLocaleTimeString('fr-FR');
+  const checksum = token ? token.slice(-8) : '—';
 
   switch(status) {
     case 'VALID':
-      showResult('valid', '✓', 'ACCÈS AUTORISÉ', `Bracelet #${String(bracelet_num).padStart(4,'0')}`);
+      updateStatsImmediately('VALID');
+      showResult('valid', '✓', 'ACCÈS AUTORISÉ', `B-${String(bracelet_num).padStart(4,'0')} • ${scanTime} • code ${checksum}`);
       flashBody('valid');
       addToLog('valid', bracelet_num);
       fetchStats();
@@ -1157,21 +1164,38 @@ function handleScanResult(result, token) {
       const when = first_scan_at
         ? `1er scan: ${new Date(first_scan_at).toLocaleTimeString('fr-FR')}`
         : 'Heure inconnue';
-      showResult('invalid', '⚠', 'DOUBLON DÉTECTÉ', `${when} — BRACELET SUSPECT !`);
+      showResult('invalid', '⚠', 'DOUBLON DÉTECTÉ', `${when} • code ${checksum}`);
       flashBody('invalid');
       addToLog('duplicate', bracelet_num);
+      fetchStats();
       if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
       break;
 
     case 'INVALID':
-      showResult('invalid', '✕', 'CODE INVALIDE', 'QR code non reconnu dans le système');
+      showResult('invalid', '✕', 'CODE INVALIDE', `Non reconnu • ${scanTime} • code ${checksum}`);
       flashBody('invalid');
       addToLog('invalid', null);
+      fetchStats();
       break;
 
     case 'OFFLINE_QUEUED':
-      showResult('duplicate', '⏳', 'HORS LIGNE', `Enregistré — synchronisation dès retour réseau`);
+      showResult('duplicate', '⏳', 'HORS LIGNE', `Enregistré localement • ${scanTime} • code ${checksum}`);
       break;
+  }
+}
+
+function updateStatsImmediately(status) {
+  if (status !== 'VALID') return;
+
+  stats.scanned = Number(stats.scanned || 0) + 1;
+  stats.remaining = Math.max(Number(stats.remaining || 0) - 1, 0);
+
+  document.getElementById('statScanned').textContent = stats.scanned;
+  document.getElementById('statRemaining').textContent = stats.remaining;
+
+  if (stats.total > 0) {
+    const rate = Math.round((stats.scanned / stats.total) * 100);
+    document.getElementById('statRate').textContent = `${rate}%`;
   }
 }
 

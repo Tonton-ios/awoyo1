@@ -384,11 +384,13 @@
 const CONFIG = {
   SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
-  REFRESH_INTERVAL: 5000,
+  REFRESH_INTERVAL: 1000,
 };
 
 let supabaseClient = null;
 let refreshTimer = null;
+let refreshQueued = false;
+let refreshInFlight = false;
 
 async function init() {
   supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
@@ -401,23 +403,45 @@ async function init() {
     return;
   }
 
-  // Temps réel
+  // Temps réel + polling rapide pour les hébergements où Realtime est lent ou non activé.
   supabaseClient.channel('admin_realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, refreshAll)
-    .subscribe();
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, () => queueRefresh('LIVE SCAN'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bracelets' }, () => queueRefresh('LIVE BRACELET'))
+    .subscribe(status => {
+      document.getElementById('logRefresh').textContent =
+        status === 'SUBSCRIBED' ? 'LIVE CONNECTÉ' : `LIVE ${status}`;
+    });
 
   refreshAll();
-  setInterval(refreshAll, CONFIG.REFRESH_INTERVAL);
+  refreshTimer = setInterval(() => queueRefresh('AUTO 1S'), CONFIG.REFRESH_INTERVAL);
+}
+
+function queueRefresh(label = 'LIVE') {
+  document.getElementById('logRefresh').textContent = label;
+  if (refreshQueued) return;
+  refreshQueued = true;
+  setTimeout(refreshAll, 120);
 }
 
 async function refreshAll() {
-  await Promise.all([
-    fetchDashboardStats(),
-    fetchRecentLogs(),
-    fetchHourlyActivity()
-  ]);
-  document.getElementById('lastUpdate').textContent =
-    new Date().toLocaleTimeString('fr-FR');
+  if (refreshInFlight) {
+    setTimeout(refreshAll, 180);
+    return;
+  }
+
+  refreshQueued = false;
+  refreshInFlight = true;
+  try {
+    await Promise.all([
+      fetchDashboardStats(),
+      fetchRecentLogs(),
+      fetchHourlyActivity()
+    ]);
+    document.getElementById('lastUpdate').textContent =
+      new Date().toLocaleTimeString('fr-FR');
+  } finally {
+    refreshInFlight = false;
+  }
 }
 
 async function fetchDashboardStats() {
