@@ -185,7 +185,7 @@
     min-height: 240px;
   }
 
-  #qr-reader video { width: 100% !important; max-height: 300px; object-fit: cover; }
+  #qr-reader video { width: 100% !important; max-height: 360px; object-fit: cover; }
 
   /* Remove default html5-qrcode UI clutter */
   #qr-reader > div { border: none !important; }
@@ -232,6 +232,16 @@
     10%  { opacity: 1; }
     90%  { opacity: 1; }
     100% { top: 172px; opacity: 0; }
+  }
+
+  .scanner-hint {
+    padding: 10px 14px 0;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .04em;
+    text-align: center;
+    min-height: 24px;
   }
 
   /* ── SCANNER CONTROLS ── */
@@ -717,6 +727,7 @@
         </div>
       </div>
     </div>
+    <div class="scanner-hint" id="scannerHint">Appuyez sur demarrer, puis placez le QR code bien net dans le cadre.</div>
 
     <div class="scanner-controls">
       <button class="btn btn-start" id="btnStart" onclick="startScanner()">▶ DÉMARRER</button>
@@ -858,26 +869,38 @@ async function handleLogin() {
 function startScanner() {
   if (isScanning) return;
 
+  const hint = document.getElementById('scannerHint');
   html5QrCode = new Html5Qrcode("qr-reader");
 
   const config = {
-    fps: 15,
-    qrbox: { width: 220, height: 220 },
-    aspectRatio: 1.0,
+    fps: 12,
+    qrbox: (viewfinderWidth, viewfinderHeight) => {
+      const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+      const boxSize = Math.floor(Math.min(Math.max(minEdge * 0.82, 220), 340));
+      return { width: boxSize, height: boxSize };
+    },
     disableFlip: false,
-    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+    experimentalFeatures: {
+      useBarCodeDetectorIfSupported: true
+    }
   };
 
   html5QrCode.start(
     { facingMode: "environment" },
     config,
     onQrSuccess,
-    () => {} // Ignore decode errors (scanning en cours)
+    (errorMessage) => {
+      if (hint && errorMessage) {
+        hint.textContent = 'Recherche du QR code... rapprochez ou eloignez legerement le telephone.';
+      }
+    }
   ).then(() => {
     isScanning = true;
     document.getElementById('btnStart').disabled = true;
     document.getElementById('btnStop').disabled = false;
+    if (hint) hint.textContent = 'Camera active. Gardez le QR code entier, net, et bien eclaire dans le cadre.';
   }).catch(err => {
+    if (hint) hint.textContent = 'Impossible de demarrer la camera.';
     showResult('invalid', '✕', 'ERREUR CAMÉRA', err.message || 'Accès caméra refusé');
   });
 }
@@ -888,6 +911,7 @@ function stopScanner() {
     isScanning = false;
     document.getElementById('btnStart').disabled = false;
     document.getElementById('btnStop').disabled = true;
+    document.getElementById('scannerHint').textContent = 'Appuyez sur demarrer, puis placez le QR code bien net dans le cadre.';
   });
 }
 
@@ -895,6 +919,8 @@ function stopScanner() {
 //  TRAITEMENT D'UN SCAN
 // ═══════════════════════════════════════════════════════════
 async function onQrSuccess(token) {
+  document.getElementById('scannerHint').textContent = 'QR code detecte. Verification en cours...';
+
   // Anti-double-déclenchement
   const now = Date.now();
   if (now - lastScanTime < CONFIG.SCAN_COOLDOWN_MS) return;
