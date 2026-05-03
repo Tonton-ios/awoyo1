@@ -666,7 +666,7 @@
       <label class="form-label">Mot de passe</label>
       <input type="password" class="form-input" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
     </div>
-    <button class="btn-login" id="loginBtn" onclick="handleLogin()">CONNEXION</button>
+    <button class="btn-login" id="loginBtn" type="button">CONNEXION</button>
     <div class="error-msg" id="loginError"></div>
   </div>
 </div>
@@ -766,7 +766,7 @@
 //  CONFIGURATION — Remplacer par vos vraies valeurs
 // ═══════════════════════════════════════════════════════════
 const CONFIG = {
-  SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co/rest/v1/',
+  SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
   SCAN_COOLDOWN_MS: 2500,   // Délai anti-double-scan (ms)
   RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
@@ -776,7 +776,7 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════
 //  ÉTAT GLOBAL
 // ═══════════════════════════════════════════════════════════
-let supabase = null;
+let supabaseClient = null;
 let html5QrCode = null;
 let isScanning = false;
 let currentUser = null;
@@ -792,10 +792,10 @@ let stats = { scanned: 0, remaining: 0, total: 0 };
 // ═══════════════════════════════════════════════════════════
 function initSupabase() {
   try {
-    supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+    supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
     // Temps réel : écouter les mises à jour des stats
-    supabase.channel('bracelets_realtime')
+    supabaseClient.channel('bracelets_realtime')
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'bracelets' },
         () => fetchStats()
@@ -816,11 +816,22 @@ async function handleLogin() {
   const errEl = document.getElementById('loginError');
 
   errEl.textContent = '';
+
+  if (!email || !pass) {
+    errEl.textContent = 'Entrez votre email et votre mot de passe';
+    return;
+  }
+
+  if (!supabaseClient) {
+    errEl.textContent = 'Connexion au service indisponible. Rechargez la page.';
+    return;
+  }
+
   btn.textContent = 'CONNEXION...';
   btn.disabled = true;
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pass });
 
     if (error) throw error;
 
@@ -905,7 +916,7 @@ async function onQrSuccess(token) {
 async function processScanOnline(token, isRetry = false) {
   for (let attempt = 1; attempt <= CONFIG.RETRY_ATTEMPTS; attempt++) {
     try {
-      const { data, error } = await supabase.rpc('scan_bracelet', {
+      const { data, error } = await supabaseClient.rpc('scan_bracelet', {
         p_token:    token,
         p_staff_id: staffId
       });
@@ -999,7 +1010,7 @@ function handleScanResult(result, token) {
 //  SYNCHRONISATION FILE OFFLINE
 // ═══════════════════════════════════════════════════════════
 async function syncOfflineQueue() {
-  if (!isOnline || offlineQueue.length === 0 || !supabase) return;
+  if (!isOnline || offlineQueue.length === 0 || !supabaseClient) return;
 
   const pending = offlineQueue.filter(q => !q.synced);
   if (pending.length === 0) return;
@@ -1007,7 +1018,7 @@ async function syncOfflineQueue() {
   let synced = 0;
   for (const entry of pending) {
     try {
-      await supabase.rpc('scan_bracelet', {
+      await supabaseClient.rpc('scan_bracelet', {
         p_token:    entry.token,
         p_staff_id: entry.staff_id
       });
@@ -1030,9 +1041,9 @@ async function syncOfflineQueue() {
 //  STATISTIQUES TEMPS RÉEL
 // ═══════════════════════════════════════════════════════════
 async function fetchStats() {
-  if (!supabase) return;
+  if (!supabaseClient) return;
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from('dashboard_stats')
       .select('*')
       .single();
@@ -1126,16 +1137,30 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 window.addEventListener('online',  () => setOnline(true));
 window.addEventListener('offline', () => setOnline(false));
 
+function bindLoginControls() {
+  const loginBtn = document.getElementById('loginBtn');
+  const loginEmail = document.getElementById('loginEmail');
+  const loginPassword = document.getElementById('loginPassword');
+
+  loginBtn.addEventListener('click', handleLogin);
+  [loginEmail, loginPassword].forEach(input => {
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') handleLogin();
+    });
+  });
+}
+
 // ═══════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════
 (function boot() {
+  bindLoginControls();
   initSupabase();
   updateQueueUI();
 
   // Auto-login si session active
-  if (supabase) {
-    supabase.auth.getSession().then(({ data }) => {
+  if (supabaseClient) {
+    supabaseClient.auth.getSession().then(({ data }) => {
       if (data.session) {
         currentUser = data.session.user;
         staffId = `staff_${currentUser.id.slice(0, 8)}`;

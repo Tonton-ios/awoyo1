@@ -387,21 +387,22 @@ const CONFIG = {
   REFRESH_INTERVAL: 5000,
 };
 
-let supabase = null;
+let supabaseClient = null;
 let refreshTimer = null;
 
 async function init() {
-  supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
   // Auth check
-  const { data } = await supabase.auth.getSession();
-  if (!data.session) {
-    window.location.href = 'scanner.html';
+  const { data } = await supabaseClient.auth.getSession();
+  const unlockedFromHome = sessionStorage.getItem('admin_index_unlocked') === 'true';
+  if (!data.session && !unlockedFromHome) {
+    window.location.href = 'index.html';
     return;
   }
 
   // Temps réel
-  supabase.channel('admin_realtime')
+  supabaseClient.channel('admin_realtime')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, refreshAll)
     .subscribe();
 
@@ -420,7 +421,7 @@ async function refreshAll() {
 }
 
 async function fetchDashboardStats() {
-  const { data } = await supabase.from('dashboard_stats').select('*').single();
+  const { data } = await supabaseClient.from('dashboard_stats').select('*').single();
   if (!data) return;
 
   document.getElementById('ds-scanned').textContent   = data.scanned_count ?? '—';
@@ -429,14 +430,14 @@ async function fetchDashboardStats() {
   document.getElementById('progressFill').style.width = `${data.fill_rate_percent || 0}%`;
 
   // Duplicates & invalids
-  const { count: dups } = await supabase.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','DUPLICATE');
-  const { count: inv  } = await supabase.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','INVALID');
+  const { count: dups } = await supabaseClient.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','DUPLICATE');
+  const { count: inv  } = await supabaseClient.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','INVALID');
   document.getElementById('ds-duplicates').textContent = dups ?? '—';
   document.getElementById('ds-invalid').textContent    = inv  ?? '—';
 }
 
 async function fetchRecentLogs() {
-  const { data } = await supabase
+  const { data } = await supabaseClient
     .from('scan_logs')
     .select('scanned_at, bracelet_uid, status, scanned_by')
     .order('scanned_at', { ascending: false })
@@ -472,7 +473,7 @@ async function fetchRecentLogs() {
 
 async function fetchHourlyActivity() {
   // Scans par heure sur les 8 dernières heures
-  const { data } = await supabase
+  const { data } = await supabaseClient
     .from('scan_logs')
     .select('scanned_at')
     .eq('status', 'VALID')
@@ -520,7 +521,7 @@ async function searchBracelet() {
   el.className = 'search-result visible';
   el.innerHTML = 'Recherche en cours...';
 
-  const { data } = await supabase
+  const { data } = await supabaseClient
     .from('bracelets')
     .select('bracelet_num, scanned, scanned_at, scanned_by')
     .eq('bracelet_num', num)
