@@ -25,7 +25,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")  # Service role key (backend only!)
 SECRET_HMAC_KEY = os.getenv("SECRET_HMAC_KEY", "CHANGE_THIS_TO_A_STRONG_SECRET_64_CHARS_MIN")
-TOTAL_BRACELETS = 1022
+TOTAL_BRACELETS = 1070
 OUTPUT_DIR = Path("./qr_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
