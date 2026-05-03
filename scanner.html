@@ -1213,7 +1213,8 @@ function handleScanResult(result, token) {
       break;
 
     case 'INVALID':
-      showResult('invalid', '✕', 'CODE INVALIDE', `Non reconnu • ${scanTime} • code ${checksum}`);
+      showResult('invalid', '✕', 'QR NON TROUVÉ', `Ce bracelet n'existe pas dans Supabase • ${scanTime} • code ${checksum}`);
+      document.getElementById('scannerHint').textContent = 'QR lu correctement, mais absent de la table bracelets.';
       flashBody('invalid');
       addToLog('invalid', null);
       fetchStats();

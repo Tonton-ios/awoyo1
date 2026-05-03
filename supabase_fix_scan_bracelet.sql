@@ -2,6 +2,8 @@
 -- A coller dans Supabase > SQL Editor, puis Run.
 -- Corrige l'erreur:
 -- "column bracelet_uid is of type uuid but expression is of type text"
+-- Et valide le bracelet par token exact pour éviter les faux "QR non reconnu"
+-- quand l'UUID extrait et la ligne bracelet ne sont pas comparés avec le même type.
 
 drop function if exists public.scan_bracelet(text, text);
 
@@ -38,8 +40,7 @@ begin
   select *
   into v_bracelet
   from public.bracelets
-  where uid = v_uid
-    and token = trim(p_token)
+  where token = trim(p_token)
   for update;
 
   if not found then
@@ -56,6 +57,8 @@ begin
       'bracelet_num', null
     );
   end if;
+
+  v_uid := v_bracelet.uid::uuid;
 
   if v_bracelet.scanned then
     begin
@@ -77,7 +80,7 @@ begin
   set scanned = true,
       scanned_at = now(),
       scanned_by = p_staff_id
-  where uid = v_uid;
+  where token = trim(p_token);
 
   begin
     insert into public.scan_logs (bracelet_uid, status, scanned_by)
