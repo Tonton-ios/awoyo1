@@ -447,12 +447,27 @@ async function refreshAll() {
 
 async function fetchDashboardStats() {
   const { data } = await supabaseClient.from('dashboard_stats').select('*').single();
-  if (!data) return;
+  let scanned = Number(data?.scanned_count ?? 0);
+  let total = Number(data?.total_bracelets ?? 0);
+  let remaining = Number(data?.remaining_entries ?? Math.max(total - scanned, 0));
+  let rate = data?.fill_rate_percent != null ? Number(data.fill_rate_percent) : null;
 
-  document.getElementById('ds-scanned').textContent   = data.scanned_count ?? '—';
-  document.getElementById('ds-remaining').textContent = data.remaining_entries ?? '—';
-  document.getElementById('ds-rate').textContent      = data.fill_rate_percent != null ? `${data.fill_rate_percent}%` : '—';
-  document.getElementById('progressFill').style.width = `${data.fill_rate_percent || 0}%`;
+  if (!total || data?.remaining_entries == null) {
+    const [{ count: totalCount }, { count: scannedCount }] = await Promise.all([
+      supabaseClient.from('bracelets').select('uid', { count:'exact', head:true }),
+      supabaseClient.from('bracelets').select('uid', { count:'exact', head:true }).eq('scanned', true)
+    ]);
+
+    total = Number(totalCount || 0);
+    scanned = Number(scannedCount || 0);
+    remaining = Math.max(total - scanned, 0);
+    rate = total > 0 ? Math.round((scanned / total) * 100) : null;
+  }
+
+  document.getElementById('ds-scanned').textContent   = scanned;
+  document.getElementById('ds-remaining').textContent = total > 0 ? remaining : '—';
+  document.getElementById('ds-rate').textContent      = rate != null ? `${rate}%` : '—';
+  document.getElementById('progressFill').style.width = `${rate || 0}%`;
 
   // Duplicates & invalids
   const { count: dups } = await supabaseClient.from('scan_logs').select('id', { count:'exact', head:true }).eq('status','DUPLICATE');

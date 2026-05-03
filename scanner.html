@@ -810,7 +810,7 @@ let lastTokenValue = '';
 let lastTokenSeenAt = 0;
 let isOnline = navigator.onLine;
 let offlineQueue = loadOfflineQueue();
-let scanLog = [];
+let scanLog = loadScanLog();
 let stats = { scanned: 0, remaining: 0, total: 0 };
 let scannerLiveTimer = null;
 let scannerLiveInFlight = false;
@@ -1283,20 +1283,50 @@ async function fetchStats() {
       .select('*')
       .single();
 
-    if (error || !data) return;
+    if (error || !data) {
+      await fetchBraceletStatsFallback();
+      return;
+    }
 
-    stats.scanned   = data.scanned_count || 0;
-    stats.remaining = data.remaining_entries || 0;
-    stats.total     = data.total_bracelets || 0;
+    stats.scanned = Number(data.scanned_count ?? 0);
+    stats.total = Number(data.total_bracelets ?? 0);
+    stats.remaining = Number(data.remaining_entries ?? Math.max(stats.total - stats.scanned, 0));
 
-    document.getElementById('statScanned').textContent   = stats.scanned;
-    document.getElementById('statRemaining').textContent = stats.remaining;
-    document.getElementById('statRate').textContent      =
-      stats.total > 0 ? `${data.fill_rate_percent}%` : '—';
+    if (!stats.total || data.remaining_entries == null) {
+      await fetchBraceletStatsFallback();
+      return;
+    }
+
+    renderStats(data.fill_rate_percent);
 
   } catch(e) {
     console.warn('Stats fetch failed:', e);
+    await fetchBraceletStatsFallback();
   }
+}
+
+async function fetchBraceletStatsFallback() {
+  const [{ count: total }, { count: scanned }] = await Promise.all([
+    supabaseClient.from('bracelets').select('uid', { count: 'exact', head: true }),
+    supabaseClient.from('bracelets').select('uid', { count: 'exact', head: true }).eq('scanned', true)
+  ]);
+
+  stats.total = Number(total || 0);
+  stats.scanned = Number(scanned || 0);
+  stats.remaining = Math.max(stats.total - stats.scanned, 0);
+  renderStats();
+}
+
+function renderStats(fillRateFromView = null) {
+  const rate = fillRateFromView != null
+    ? Number(fillRateFromView)
+    : stats.total > 0
+    ? Math.round((stats.scanned / stats.total) * 100)
+    : null;
+
+  document.getElementById('statScanned').textContent = stats.scanned;
+  document.getElementById('statRemaining').textContent = stats.total > 0 ? stats.remaining : '—';
+  document.getElementById('statRate').textContent = rate != null ? `${rate}%` : '—';
 }
 
 function startScannerLive() {
@@ -1328,7 +1358,10 @@ async function fetchRecentGlobalLogs() {
     .order('scanned_at', { ascending: false })
     .limit(12);
 
-  if (error || !data) return;
+  if (error || !data || data.length === 0) {
+    renderLogList();
+    return;
+  }
 
   scanLog = data.map(row => ({
     status: String(row.status || '').toLowerCase(),
@@ -1338,6 +1371,7 @@ async function fetchRecentGlobalLogs() {
       : '--:--:--'
   }));
 
+  saveScanLog();
   renderLogList();
 }
 
@@ -1370,6 +1404,7 @@ function addToLog(status, braceletNum) {
 
   scanLog.unshift({ status, label, time: now });
   if (scanLog.length > 20) scanLog.pop();
+  saveScanLog();
   renderLogList();
 }
 
@@ -1390,6 +1425,19 @@ function renderLogList() {
   `).join('');
 
   document.getElementById('logCount').textContent = `${scanLog.length} scans`;
+}
+
+function loadScanLog() {
+  try {
+    const savedLog = JSON.parse(localStorage.getItem('scanner_recent_log') || '[]');
+    return Array.isArray(savedLog) ? savedLog.slice(0, 20) : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function saveScanLog() {
+  localStorage.setItem('scanner_recent_log', JSON.stringify(scanLog.slice(0, 20)));
 }
 
 function setLiveText(text) {
@@ -1489,6 +1537,7 @@ function bindLoginControls() {
   bindLoginControls();
   initSupabase();
   updateQueueUI();
+  renderLogList();
 
   // Auto-login si session active
   if (supabaseClient) {
