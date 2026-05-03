@@ -783,9 +783,12 @@ const CONFIG = {
   SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
   SCAN_COOLDOWN_MS: 1200,   // Délai anti-double-scan (ms)
+  SAME_QR_IGNORE_MS: 8000,   // Ignore le même QR laissé devant la caméra
   RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
   RETRY_DELAY_MS: 800,       // Délai entre tentatives
 };
+
+const BRACELET_TOKEN_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{64}$/i;
 
 // ═══════════════════════════════════════════════════════════
 //  ÉTAT GLOBAL
@@ -802,8 +805,10 @@ let isScanning = false;
 let currentUser = null;
 let staffId = null;
 let lastScanTime = 0;
+let lastTokenValue = '';
+let lastTokenSeenAt = 0;
 let isOnline = navigator.onLine;
-let offlineQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
+let offlineQueue = loadOfflineQueue();
 let scanLog = [];
 let stats = { scanned: 0, remaining: 0, total: 0 };
 
@@ -1066,10 +1071,24 @@ function scanQrImageFile(event) {
 //  TRAITEMENT D'UN SCAN
 // ═══════════════════════════════════════════════════════════
 async function onQrSuccess(token) {
-  document.getElementById('scannerHint').textContent = 'QR code detecte. Verification en cours...';
+  const cleanToken = normalizeToken(token);
+  const now = Date.now();
+
+  if (!isBraceletToken(cleanToken)) {
+    document.getElementById('scannerHint').textContent = 'QR ignore: ce code ne correspond pas a un bracelet AWOYO.';
+    return;
+  }
+
+  if (cleanToken === lastTokenValue && now - lastTokenSeenAt < CONFIG.SAME_QR_IGNORE_MS) {
+    document.getElementById('scannerHint').textContent = 'Même QR déjà lu. Retirez-le du cadre pour scanner le suivant.';
+    return;
+  }
+
+  lastTokenValue = cleanToken;
+  lastTokenSeenAt = now;
+  document.getElementById('scannerHint').textContent = 'QR bracelet detecte. Verification en cours...';
 
   // Anti-double-déclenchement
-  const now = Date.now();
   if (now - lastScanTime < CONFIG.SCAN_COOLDOWN_MS) return;
   lastScanTime = now;
 
@@ -1079,9 +1098,9 @@ async function onQrSuccess(token) {
   showResult('pending', '⟳', 'VÉRIFICATION...', 'Interrogation de la base de données');
 
   if (isOnline) {
-    await processScanOnline(token);
+    await processScanOnline(cleanToken);
   } else {
-    processScanOffline(token);
+    processScanOffline(cleanToken);
   }
 }
 
@@ -1101,9 +1120,14 @@ async function processScanOnline(token, isRetry = false) {
 
     } catch(e) {
       if (attempt === CONFIG.RETRY_ATTEMPTS) {
-        // Basculer en mode dégradé
-        console.warn('Réseau défaillant, bascule offline:', e);
-        processScanOffline(token);
+        if (!navigator.onLine || isNetworkError(e)) {
+          console.warn('Réseau défaillant, bascule offline:', e);
+          processScanOffline(token);
+          return;
+        }
+
+        showResult('invalid', '!', 'ERREUR SERVEUR', e.message || 'Validation impossible pour le moment');
+        document.getElementById('scannerHint').textContent = 'Erreur Supabase. Le scan n’a pas ete mis en hors-ligne.';
         return;
       }
       await sleep(CONFIG.RETRY_DELAY_MS * attempt);
@@ -1113,6 +1137,11 @@ async function processScanOnline(token, isRetry = false) {
 
 // ── SCAN HORS LIGNE (mode dégradé) ────────────────────────
 function processScanOffline(token) {
+  if (!isBraceletToken(token)) {
+    document.getElementById('scannerHint').textContent = 'QR ignore: code bracelet invalide.';
+    return;
+  }
+
   // Vérification locale d'abord (scans de cette session)
   const localDuplicate = offlineQueue.find(q => q.token === token);
 
@@ -1300,6 +1329,9 @@ function addToLog(status, braceletNum) {
 }
 
 function updateQueueUI() {
+  offlineQueue = offlineQueue.filter(q => q && !q.synced && isBraceletToken(q.token));
+  localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
+
   const count = offlineQueue.filter(q => !q.synced).length;
   const card  = document.getElementById('queueCard');
   card.classList.toggle('visible', count > 0);
@@ -1320,6 +1352,37 @@ function setOnline(online) {
 function showManualInput() {
   const token = prompt('Entrer le code QR manuellement:');
   if (token && token.trim()) onQrSuccess(token.trim());
+}
+
+function normalizeToken(token) {
+  return String(token || '').trim();
+}
+
+function isBraceletToken(token) {
+  return BRACELET_TOKEN_REGEX.test(normalizeToken(token));
+}
+
+function loadOfflineQueue() {
+  try {
+    const savedQueue = JSON.parse(localStorage.getItem('offline_queue') || '[]');
+    const validQueue = Array.isArray(savedQueue)
+      ? savedQueue.filter(q => q && !q.synced && isBraceletToken(q.token))
+      : [];
+    localStorage.setItem('offline_queue', JSON.stringify(validQueue));
+    return validQueue;
+  } catch(e) {
+    localStorage.removeItem('offline_queue');
+    return [];
+  }
+}
+
+function isNetworkError(error) {
+  const message = String(error && error.message ? error.message : error || '').toLowerCase();
+  return message.includes('failed to fetch')
+    || message.includes('network')
+    || message.includes('load failed')
+    || message.includes('timeout')
+    || message.includes('offline');
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
