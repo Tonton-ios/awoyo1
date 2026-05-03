@@ -384,7 +384,7 @@
 const CONFIG = {
   SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
-  REFRESH_INTERVAL: 1000,
+  REFRESH_INTERVAL: 750,
 };
 
 let supabaseClient = null;
@@ -405,22 +405,22 @@ async function init() {
 
   // Temps réel + polling rapide pour les hébergements où Realtime est lent ou non activé.
   supabaseClient.channel('admin_realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, () => queueRefresh('LIVE SCAN'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'bracelets' }, () => queueRefresh('LIVE BRACELET'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_logs' }, () => queueRefresh('LIVE SCAN', 20))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bracelets' }, () => queueRefresh('LIVE BRACELET', 20))
     .subscribe(status => {
       document.getElementById('logRefresh').textContent =
         status === 'SUBSCRIBED' ? 'LIVE CONNECTÉ' : `LIVE ${status}`;
     });
 
   refreshAll();
-  refreshTimer = setInterval(() => queueRefresh('AUTO 1S'), CONFIG.REFRESH_INTERVAL);
+  refreshTimer = setInterval(() => queueRefresh('AUTO LIVE', 0), CONFIG.REFRESH_INTERVAL);
 }
 
-function queueRefresh(label = 'LIVE') {
+function queueRefresh(label = 'LIVE', delay = 80) {
   document.getElementById('logRefresh').textContent = label;
   if (refreshQueued) return;
   refreshQueued = true;
-  setTimeout(refreshAll, 120);
+  setTimeout(refreshAll, delay);
 }
 
 async function refreshAll() {
@@ -439,6 +439,7 @@ async function refreshAll() {
     ]);
     document.getElementById('lastUpdate').textContent =
       new Date().toLocaleTimeString('fr-FR');
+    document.getElementById('logRefresh').textContent = 'DONNÉES LIVE';
   } finally {
     refreshInFlight = false;
   }

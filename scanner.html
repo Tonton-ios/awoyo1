@@ -786,6 +786,7 @@ const CONFIG = {
   SAME_QR_IGNORE_MS: 8000,   // Ignore le même QR laissé devant la caméra
   RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
   RETRY_DELAY_MS: 800,       // Délai entre tentatives
+  LIVE_REFRESH_MS: 1000,      // Données live scanner
 };
 
 const BRACELET_TOKEN_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{64}$/i;
@@ -811,6 +812,8 @@ let isOnline = navigator.onLine;
 let offlineQueue = loadOfflineQueue();
 let scanLog = [];
 let stats = { scanned: 0, remaining: 0, total: 0 };
+let scannerLiveTimer = null;
+let scannerLiveInFlight = false;
 
 // ═══════════════════════════════════════════════════════════
 //  INITIALISATION SUPABASE
@@ -823,13 +826,15 @@ function initSupabase() {
     supabaseClient.channel('bracelets_realtime')
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'bracelets' },
-        () => fetchStats()
+        () => refreshScannerLive('LIVE BRACELET')
       )
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'scan_logs' },
-        () => fetchStats()
+        () => refreshScannerLive('LIVE SCAN')
       )
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') setLiveText('LIVE CONNECTE');
+      });
   } catch(e) {
     console.error('Supabase init failed:', e);
   }
@@ -872,6 +877,7 @@ async function handleLogin() {
 
     await fetchStats();
     setOnline(navigator.onLine);
+    startScannerLive();
     syncOfflineQueue(); // Sync auto au login
 
   } catch(e) {
@@ -1119,6 +1125,12 @@ async function processScanOnline(token, isRetry = false) {
       return;
 
     } catch(e) {
+      if (isSupabaseSchemaError(e)) {
+        showResult('invalid', '!', 'SUPABASE À CORRIGER', 'Colonne UUID: appliquez supabase_fix_scan_bracelet.sql');
+        document.getElementById('scannerHint').textContent = 'La fonction Supabase scan_bracelet doit caster bracelet_uid en UUID.';
+        return;
+      }
+
       if (attempt === CONFIG.RETRY_ATTEMPTS) {
         if (!navigator.onLine || isNetworkError(e)) {
           console.warn('Réseau défaillant, bascule offline:', e);
@@ -1286,6 +1298,48 @@ async function fetchStats() {
   }
 }
 
+function startScannerLive() {
+  if (scannerLiveTimer) return;
+  refreshScannerLive('LIVE');
+  scannerLiveTimer = window.setInterval(() => refreshScannerLive('AUTO LIVE'), CONFIG.LIVE_REFRESH_MS);
+}
+
+async function refreshScannerLive(label = 'LIVE') {
+  if (!supabaseClient || scannerLiveInFlight) return;
+
+  scannerLiveInFlight = true;
+  setLiveText(label);
+  try {
+    await Promise.all([
+      fetchStats(),
+      fetchRecentGlobalLogs()
+    ]);
+    setLiveText(`MAJ ${new Date().toLocaleTimeString('fr-FR')}`);
+  } finally {
+    scannerLiveInFlight = false;
+  }
+}
+
+async function fetchRecentGlobalLogs() {
+  const { data, error } = await supabaseClient
+    .from('scan_logs')
+    .select('scanned_at, bracelet_uid, status, scanned_by')
+    .order('scanned_at', { ascending: false })
+    .limit(12);
+
+  if (error || !data) return;
+
+  scanLog = data.map(row => ({
+    status: String(row.status || '').toLowerCase(),
+    label: row.bracelet_uid ? `${row.bracelet_uid.slice(0, 8)}...` : 'CODE INVALIDE',
+    time: row.scanned_at
+      ? new Date(row.scanned_at).toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+      : '--:--:--'
+  }));
+
+  renderLogList();
+}
+
 // ═══════════════════════════════════════════════════════════
 //  UI HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -1315,8 +1369,17 @@ function addToLog(status, braceletNum) {
 
   scanLog.unshift({ status, label, time: now });
   if (scanLog.length > 20) scanLog.pop();
+  renderLogList();
+}
 
+function renderLogList() {
   const listEl = document.getElementById('logList');
+  if (scanLog.length === 0) {
+    listEl.innerHTML = `<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text-dim)">Aucun scan effectué</div>`;
+    document.getElementById('logCount').textContent = '0 scans';
+    return;
+  }
+
   listEl.innerHTML = scanLog.map(s => `
     <div class="log-item">
       <div class="log-dot ${s.status}"></div>
@@ -1326,6 +1389,11 @@ function addToLog(status, braceletNum) {
   `).join('');
 
   document.getElementById('logCount').textContent = `${scanLog.length} scans`;
+}
+
+function setLiveText(text) {
+  const statusText = document.getElementById('statusText');
+  if (statusText && isOnline) statusText.textContent = text;
 }
 
 function updateQueueUI() {
@@ -1385,6 +1453,13 @@ function isNetworkError(error) {
     || message.includes('offline');
 }
 
+function isSupabaseSchemaError(error) {
+  const message = String(error && error.message ? error.message : error || '').toLowerCase();
+  return message.includes('bracelet_uid')
+    && message.includes('uuid')
+    && (message.includes('text') || message.includes('character varying'));
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ═══════════════════════════════════════════════════════════
@@ -1424,6 +1499,7 @@ function bindLoginControls() {
           currentUser.email.split('@')[0].toUpperCase();
         document.getElementById('loginModal').classList.add('hidden');
         fetchStats();
+        startScannerLive();
       }
     });
   }
