@@ -782,7 +782,7 @@
 const CONFIG = {
   SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
-  SCAN_COOLDOWN_MS: 2500,   // Délai anti-double-scan (ms)
+  SCAN_COOLDOWN_MS: 1200,   // Délai anti-double-scan (ms)
   RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
   RETRY_DELAY_MS: 800,       // Délai entre tentatives
 };
@@ -794,6 +794,8 @@ let supabaseClient = null;
 let cameraStream = null;
 let scanLoopId = null;
 let scanCanvas = null;
+let scanContext = null;
+let qrDetector = null;
 let selectedFacingMode = 'environment';
 let frameCounter = 0;
 let isScanning = false;
@@ -893,8 +895,9 @@ async function startScanner() {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: selectedFacingMode },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 },
         focusMode: 'continuous'
       },
       audio: false
@@ -905,6 +908,7 @@ async function startScanner() {
 
     isScanning = true;
     frameCounter = 0;
+    initQrDetector();
     document.getElementById('btnStart').disabled = true;
     document.getElementById('btnStop').disabled = false;
     if (hint) hint.textContent = 'Camera active. Visez le QR, puis rapprochez/eloignez lentement.';
@@ -921,7 +925,7 @@ function stopScanner() {
   if (!isScanning) return;
   isScanning = false;
   if (scanLoopId) {
-    window.cancelAnimationFrame(scanLoopId);
+    window.clearTimeout(scanLoopId);
     scanLoopId = null;
   }
   stopCameraTracks();
@@ -934,6 +938,16 @@ function stopCameraTracks() {
   if (cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
     cameraStream = null;
+  }
+}
+
+function initQrDetector() {
+  if (!qrDetector && 'BarcodeDetector' in window) {
+    try {
+      qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
+    } catch(e) {
+      qrDetector = null;
+    }
   }
 }
 
@@ -950,7 +964,6 @@ async function scanCameraFrame(video) {
       return;
     }
 
-    frameCounter++;
     if (frameCounter % 45 === 0) {
       document.getElementById('scannerHint').textContent =
         'Toujours en recherche... augmentez la luminosite du PC, zoomez le QR, evitez les reflets.';
@@ -960,7 +973,7 @@ async function scanCameraFrame(video) {
       `Lecture camera impossible: ${e.message || e.name || 'erreur inconnue'}`;
   }
 
-  scanLoopId = window.requestAnimationFrame(() => scanCameraFrame(video));
+  scanLoopId = window.setTimeout(() => scanCameraFrame(video), 80);
 }
 
 async function decodeQrFromVideo(video) {
@@ -968,10 +981,11 @@ async function decodeQrFromVideo(video) {
     return null;
   }
 
-  if ('BarcodeDetector' in window) {
+  frameCounter++;
+
+  if (qrDetector && frameCounter % 2 === 0) {
     try {
-      const detector = new BarcodeDetector({ formats: ['qr_code'] });
-      const codes = await detector.detect(video);
+      const codes = await qrDetector.detect(video);
       if (codes.length && codes[0].rawValue) return codes[0].rawValue;
     } catch(e) {
       // jsQR below is the cross-browser fallback.
@@ -984,13 +998,17 @@ async function decodeQrFromVideo(video) {
   }
 
   scanCanvas = scanCanvas || document.createElement('canvas');
-  const context = scanCanvas.getContext('2d', { willReadFrequently: true });
-  const maxWidth = 960;
-  const scale = Math.min(1, maxWidth / video.videoWidth);
-  scanCanvas.width = Math.floor(video.videoWidth * scale);
-  scanCanvas.height = Math.floor(video.videoHeight * scale);
-  context.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+  scanContext = scanContext || scanCanvas.getContext('2d', { willReadFrequently: true });
 
+  const sourceSize = Math.floor(Math.min(video.videoWidth, video.videoHeight) * 0.82);
+  const sourceX = Math.floor((video.videoWidth - sourceSize) / 2);
+  const sourceY = Math.floor((video.videoHeight - sourceSize) / 2);
+  const targetSize = 520;
+  scanCanvas.width = targetSize;
+  scanCanvas.height = targetSize;
+  scanContext.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, targetSize, targetSize);
+
+  const context = scanContext;
   const imageData = context.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
   const decoded = jsQR(imageData.data, imageData.width, imageData.height, {
     inversionAttempts: 'attemptBoth'
