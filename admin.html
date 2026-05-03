@@ -175,6 +175,7 @@
   .log-table { width:100%; border-collapse:collapse; }
   .log-table th { font-family:var(--mono); font-size:10px; color:var(--text-dim); text-align:left; padding:10px; border-bottom:1px solid var(--border); letter-spacing:0.08em; text-transform:uppercase; }
   .log-table td { font-family:var(--mono); font-size:12px; padding:8px 10px; border-bottom:1px solid rgba(30,40,52,0.5); color:var(--text); }
+  .log-table tr:first-child td { background:rgba(34,229,143,.045); }
 
   .badge {
     display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.05em;
@@ -332,9 +333,9 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">// LOG TEMPS RÉEL</span>
-        <span id="logRefresh" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">AUTO-REFRESH</span>
+        <span id="logRefresh" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">AUTO LIVE</span>
       </div>
-      <div style="overflow-x:auto;max-height:360px;overflow-y:auto;">
+      <div style="overflow-x:auto;max-height:520px;overflow-y:auto;">
         <table class="log-table">
           <thead>
             <tr>
@@ -384,7 +385,9 @@
 const CONFIG = {
   SUPABASE_URL: 'https://kjvjqqauterqygljmczv.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqdmpxcWF1dGVycXlnbGptY3p2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MTA2MTcsImV4cCI6MjA5MzM4NjYxN30.XNRGexQThVi_mXlGdZNk5KOmX0PPBcmJHcMFBaczJL4',
-  REFRESH_INTERVAL: 750,
+  REFRESH_INTERVAL: 1000,
+  LOG_PAGE_SIZE: 1000,
+  MAX_LOG_ROWS: 10000,
 };
 
 let supabaseClient = null;
@@ -437,9 +440,10 @@ async function refreshAll() {
       fetchRecentLogs(),
       fetchHourlyActivity()
     ]);
-    document.getElementById('lastUpdate').textContent =
-      new Date().toLocaleTimeString('fr-FR');
-    document.getElementById('logRefresh').textContent = 'DONNÉES LIVE';
+    const now = new Date().toLocaleTimeString('fr-FR');
+    const logRows = document.getElementById('logTableBody').dataset.logCount || '0';
+    document.getElementById('lastUpdate').textContent = now;
+    document.getElementById('logRefresh').textContent = `AUTO LIVE • ${logRows} SCANS`;
   } finally {
     refreshInFlight = false;
   }
@@ -477,20 +481,18 @@ async function fetchDashboardStats() {
 }
 
 async function fetchRecentLogs() {
-  const { data } = await supabaseClient
-    .from('scan_logs')
-    .select('scanned_at, bracelet_uid, status, scanned_by')
-    .order('scanned_at', { ascending: false })
-    .limit(20);
+  const data = await fetchAllScanLogs();
 
   if (!data) return;
 
   const tbody = document.getElementById('logTableBody');
   if (data.length === 0) {
+    tbody.dataset.logCount = '0';
     tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:20px">Aucun scan</td></tr>`;
     return;
   }
 
+  tbody.dataset.logCount = String(data.length);
   tbody.innerHTML = data.map(r => {
     const badge = r.status === 'VALID'
       ? '<span class="badge badge-valid">VALIDE</span>'
@@ -498,17 +500,88 @@ async function fetchRecentLogs() {
       ? '<span class="badge badge-duplicate">DOUBLON</span>'
       : '<span class="badge badge-invalid">INVALIDE</span>';
 
-    const time = new Date(r.scanned_at).toLocaleTimeString('fr-FR');
-    const uid  = r.bracelet_uid ? r.bracelet_uid.slice(0,8) + '...' : '—';
-    const staff= r.scanned_by ? r.scanned_by.slice(0,12) : '—';
+    const time = r.scanned_at
+      ? new Date(r.scanned_at).toLocaleString('fr-FR', {
+          day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'
+        })
+      : '—';
+    const uid  = formatBraceletLabel(r);
+    const staff= r.scanned_by || '—';
 
     return `<tr>
       <td>${time}</td>
-      <td style="font-size:11px;color:var(--text-dim)">${uid}</td>
+      <td style="font-size:11px;color:var(--text-dim)">${escapeHtml(uid)}</td>
       <td>${badge}</td>
-      <td style="color:var(--text-dim)">${staff}</td>
+      <td style="color:var(--text-dim)">${escapeHtml(staff)}</td>
     </tr>`;
   }).join('');
+
+  document.getElementById('logRefresh').textContent =
+    data.length >= CONFIG.MAX_LOG_ROWS ? `${data.length}+ SCANS` : `${data.length} SCANS`;
+}
+
+async function fetchAllScanLogs() {
+  const rows = [];
+  for (let from = 0; from < CONFIG.MAX_LOG_ROWS; from += CONFIG.LOG_PAGE_SIZE) {
+    const to = from + CONFIG.LOG_PAGE_SIZE - 1;
+    const { data, error } = await supabaseClient
+      .from('scan_logs')
+      .select('scanned_at, bracelet_uid, status, scanned_by')
+      .order('scanned_at', { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      console.warn('Logs fetch failed:', error);
+      return rows.length ? rows : null;
+    }
+
+    rows.push(...(data || []));
+    if (!data || data.length < CONFIG.LOG_PAGE_SIZE) break;
+  }
+
+  return attachBraceletNumbers(rows);
+}
+
+async function attachBraceletNumbers(rows) {
+  const uids = [...new Set(rows.map(row => row.bracelet_uid).filter(Boolean))];
+  if (uids.length === 0) return rows;
+
+  const braceletMap = new Map();
+  for (let i = 0; i < uids.length; i += CONFIG.LOG_PAGE_SIZE) {
+    const batch = uids.slice(i, i + CONFIG.LOG_PAGE_SIZE);
+    const { data, error } = await supabaseClient
+      .from('bracelets')
+      .select('uid, bracelet_num')
+      .in('uid', batch);
+
+    if (error) {
+      console.warn('Bracelet lookup failed:', error);
+      return rows;
+    }
+
+    (data || []).forEach(row => braceletMap.set(row.uid, row.bracelet_num));
+  }
+
+  return rows.map(row => ({
+    ...row,
+    bracelet_num: braceletMap.get(row.bracelet_uid) || null
+  }));
+}
+
+function formatBraceletLabel(row) {
+  if (row.bracelet_num) return `B-${String(row.bracelet_num).padStart(4, '0')}`;
+  if (row.bracelet_uid) return row.bracelet_uid;
+  return 'CODE INVALIDE';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char]));
 }
 
 async function fetchHourlyActivity() {

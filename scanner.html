@@ -379,7 +379,7 @@
     cursor: pointer;
   }
 
-  /* ── RECENT SCANS LOG ── */
+  /* ── SCANS LOG ── */
   .log-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -387,7 +387,7 @@
     overflow: hidden;
   }
 
-  .log-list { max-height: 200px; overflow-y: auto; }
+  .log-list { max-height: 300px; overflow-y: auto; }
 
   .log-item {
     display: flex;
@@ -763,7 +763,7 @@
   <!-- Log récent -->
   <div class="log-card">
     <div class="card-header">
-      <span class="card-title">// HISTORIQUE RÉCENT</span>
+      <span class="card-title">// HISTORIQUE COMPLET</span>
       <span id="logCount" style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">0 scans</span>
     </div>
     <div class="log-list" id="logList">
@@ -787,6 +787,8 @@ const CONFIG = {
   RETRY_ATTEMPTS: 3,         // Tentatives réseau avant mode dégradé
   RETRY_DELAY_MS: 800,       // Délai entre tentatives
   LIVE_REFRESH_MS: 1000,      // Données live scanner
+  LOG_PAGE_SIZE: 1000,
+  MAX_LOG_ROWS: 10000,
 };
 
 const BRACELET_TOKEN_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{64}$/i;
@@ -820,7 +822,13 @@ let scannerLiveInFlight = false;
 // ═══════════════════════════════════════════════════════════
 function initSupabase() {
   try {
-    supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+    supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+      }
+    });
 
     // Temps réel : écouter les mises à jour des stats
     supabaseClient.channel('bracelets_realtime')
@@ -1352,27 +1360,85 @@ async function refreshScannerLive(label = 'LIVE') {
 }
 
 async function fetchRecentGlobalLogs() {
-  const { data, error } = await supabaseClient
-    .from('scan_logs')
-    .select('scanned_at, bracelet_uid, status, scanned_by')
-    .order('scanned_at', { ascending: false })
-    .limit(12);
+  const data = await fetchAllGlobalLogs();
 
-  if (error || !data || data.length === 0) {
+  if (!data || data.length === 0) {
+    scanLog = [];
     renderLogList();
     return;
   }
 
   scanLog = data.map(row => ({
     status: String(row.status || '').toLowerCase(),
-    label: row.bracelet_uid ? `${row.bracelet_uid.slice(0, 8)}...` : 'CODE INVALIDE',
+    label: formatBraceletLabel(row),
     time: row.scanned_at
-      ? new Date(row.scanned_at).toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+      ? new Date(row.scanned_at).toLocaleString('fr-FR', {
+          day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'
+        })
       : '--:--:--'
   }));
 
   saveScanLog();
   renderLogList();
+}
+
+async function fetchAllGlobalLogs() {
+  const rows = [];
+  for (let from = 0; from < CONFIG.MAX_LOG_ROWS; from += CONFIG.LOG_PAGE_SIZE) {
+    const to = from + CONFIG.LOG_PAGE_SIZE - 1;
+    const { data, error } = await supabaseClient
+      .from('scan_logs')
+      .select('scanned_at, bracelet_uid, status, scanned_by')
+      .order('scanned_at', { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      console.warn('Historique fetch failed:', error);
+      return rows.length ? rows : null;
+    }
+
+    rows.push(...(data || []));
+    if (!data || data.length < CONFIG.LOG_PAGE_SIZE) break;
+  }
+
+  return attachBraceletNumbers(rows);
+}
+
+async function attachBraceletNumbers(rows) {
+  const uids = [...new Set(rows.map(row => row.bracelet_uid).filter(Boolean))];
+  if (uids.length === 0) return rows;
+
+  const braceletMap = new Map();
+  for (let i = 0; i < uids.length; i += CONFIG.LOG_PAGE_SIZE) {
+    const batch = uids.slice(i, i + CONFIG.LOG_PAGE_SIZE);
+    const { data, error } = await supabaseClient
+      .from('bracelets')
+      .select('uid, bracelet_num')
+      .in('uid', batch);
+
+    if (error) {
+      console.warn('Bracelet lookup failed:', error);
+      return rows;
+    }
+
+    (data || []).forEach(row => braceletMap.set(row.uid, row.bracelet_num));
+  }
+
+  return rows.map(row => ({
+    ...row,
+    bracelet_num: braceletMap.get(row.bracelet_uid) || null
+  }));
+}
+
+function formatBraceletLabel(row) {
+  const status = String(row.status || '').toUpperCase();
+  const prefix = row.bracelet_num
+    ? `B-${String(row.bracelet_num).padStart(4, '0')}`
+    : row.bracelet_uid
+    ? row.bracelet_uid
+    : 'CODE INVALIDE';
+
+  return `${prefix} • ${status || 'SCAN'}`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1419,8 +1485,8 @@ function renderLogList() {
   listEl.innerHTML = scanLog.map(s => `
     <div class="log-item">
       <div class="log-dot ${s.status}"></div>
-      <span class="log-bracelet">${s.label}</span>
-      <span class="log-time">${s.time}</span>
+      <span class="log-bracelet">${escapeHtml(s.label)}</span>
+      <span class="log-time">${escapeHtml(s.time)}</span>
     </div>
   `).join('');
 
@@ -1430,14 +1496,24 @@ function renderLogList() {
 function loadScanLog() {
   try {
     const savedLog = JSON.parse(localStorage.getItem('scanner_recent_log') || '[]');
-    return Array.isArray(savedLog) ? savedLog.slice(0, 20) : [];
+    return Array.isArray(savedLog) ? savedLog.slice(0, 500) : [];
   } catch(e) {
     return [];
   }
 }
 
 function saveScanLog() {
-  localStorage.setItem('scanner_recent_log', JSON.stringify(scanLog.slice(0, 20)));
+  localStorage.setItem('scanner_recent_log', JSON.stringify(scanLog.slice(0, 500)));
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char]));
 }
 
 function setLiveText(text) {
@@ -1530,29 +1606,43 @@ function bindLoginControls() {
   });
 }
 
+function lockScannerSession() {
+  currentUser = null;
+  staffId = null;
+  stopScanner();
+
+  const modal = document.getElementById('loginModal');
+  const badge = document.getElementById('staffBadge');
+  const btn = document.getElementById('loginBtn');
+  const password = document.getElementById('loginPassword');
+  const error = document.getElementById('loginError');
+
+  if (modal) modal.classList.remove('hidden');
+  if (badge) badge.textContent = 'NON CONNECTÉ';
+  if (btn) {
+    btn.textContent = 'CONNEXION';
+    btn.disabled = false;
+  }
+  if (password) password.value = '';
+  if (error) error.textContent = '';
+}
+
+function bindScannerExitLock() {
+  window.addEventListener('pagehide', lockScannerSession);
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) lockScannerSession();
+  });
+}
+
 // ═══════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════
 (function boot() {
   bindLoginControls();
+  bindScannerExitLock();
   initSupabase();
   updateQueueUI();
   renderLogList();
-
-  // Auto-login si session active
-  if (supabaseClient) {
-    supabaseClient.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        currentUser = data.session.user;
-        staffId = `staff_${currentUser.id.slice(0, 8)}`;
-        document.getElementById('staffBadge').textContent =
-          currentUser.email.split('@')[0].toUpperCase();
-        document.getElementById('loginModal').classList.add('hidden');
-        fetchStats();
-        startScannerLive();
-      }
-    });
-  }
 })();
 </script>
 </body>
